@@ -7,6 +7,7 @@ Provides commands for running benchmarks and viewing results.
 import click
 import json
 from benchmarks.reasoning import ReasoningBenchmark
+from benchmarks.tool_use import ToolUseBenchmark
 from benchmarks.config import Config
 
 
@@ -175,6 +176,128 @@ def benchmark_all():
     success = benchmark.check_success_criteria(result.accuracy, threshold)
     click.echo(f"Threshold: >{threshold:.0%}")
     click.echo(f"Result: {'✓ PASS' if success else '✗ FAIL'} ({result.accuracy:.2%})")
+
+    click.echo("\n" + "=" * 60)
+
+
+@cli.command()
+@click.option('--format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+@click.option('--verbose', is_flag=True, help='Show detailed per-task results')
+def tool_use(format, verbose):
+    """Run the tool use benchmark suite and record success rate."""
+    click.echo("Running Tool Use Benchmark Suite...")
+    click.echo("=" * 60)
+
+    benchmark = ToolUseBenchmark()
+    result = benchmark.run_benchmark()
+
+    if format == 'json':
+        output = {
+            'total_tasks': result.total_tasks,
+            'successful': result.successful,
+            'success_rate': result.success_rate,
+            'per_category_success': result.per_category_success,
+            'success_criteria_met': benchmark.check_success_criteria(result.success_rate)
+        }
+        if verbose:
+            output['per_task_results'] = result.per_task_results
+        click.echo(json.dumps(output, indent=2))
+    else:
+        click.echo(f"\nTotal Tasks: {result.total_tasks}")
+        click.echo(f"Successful: {result.successful}")
+        click.echo(f"Success Rate: {result.success_rate:.2%}")
+        click.echo(f"\nPer-Category Success Rate:")
+        for category, rate in result.per_category_success.items():
+            click.echo(f"  {category.replace('_', ' ').title()}: {rate:.2%}")
+
+        threshold = Config.TOOL_USE_BASELINE_SUCCESS_RATE
+        success = benchmark.check_success_criteria(result.success_rate, threshold)
+        click.echo(f"\nSuccess Criteria (>{threshold:.0%}): {'✓ PASS' if success else '✗ FAIL'}")
+
+        if verbose:
+            click.echo(f"\nPer-Task Results:")
+            for task_id, succeeded in result.per_task_results.items():
+                status = "✓" if succeeded else "✗"
+                click.echo(f"  {status} {task_id}")
+
+    click.echo("\n" + "=" * 60)
+
+
+@cli.command()
+@click.option('--format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+@click.option('--verbose', is_flag=True, help='Show detailed test results')
+def mock_api(format, verbose):
+    """Test mock API interactions and validate tool calling mechanisms."""
+    click.echo("Testing Mock API Interactions...")
+    click.echo("=" * 60)
+
+    benchmark = ToolUseBenchmark()
+    test_results = benchmark.test_mock_api()
+
+    if format == 'json':
+        click.echo(json.dumps(test_results, indent=2))
+    else:
+        click.echo("\nMock API Test Results:")
+        for test_name, passed in test_results.items():
+            status = "✓ PASS" if passed else "✗ FAIL"
+            test_label = test_name.replace('_', ' ').title()
+            click.echo(f"  {status}: {test_label}")
+
+        all_passed = all(test_results.values())
+        click.echo(f"\nOverall: {'✓ ALL TESTS PASSED' if all_passed else '✗ SOME TESTS FAILED'}")
+
+        if verbose:
+            click.echo("\nTest Descriptions:")
+            click.echo("  - Tool Registration: All tools registered correctly")
+            click.echo("  - Simple Call: Basic API call execution works")
+            click.echo("  - State Persistence: State maintained across calls")
+            click.echo("  - Parameter Validation: Missing parameters detected")
+            click.echo("  - Safety Enforcement: Restricted tools blocked")
+
+    click.echo("\n" + "=" * 60)
+
+
+@cli.command()
+@click.option('--format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+@click.option('--verbose', is_flag=True, help='Show detailed failure analysis')
+def failure_test(format, verbose):
+    """Run failure injection tests to verify graceful handling."""
+    click.echo("Running Failure Injection Tests...")
+    click.echo("=" * 60)
+
+    benchmark = ToolUseBenchmark()
+    failure_results = benchmark.run_failure_injection_test()
+
+    if format == 'json':
+        output = {
+            'normal_success_rate': failure_results['normal_success_rate'],
+            'failure_mode_success_rate': failure_results['failure_mode_success_rate'],
+            'resilience_score': failure_results['resilience_score'],
+            'graceful_degradation': failure_results['graceful_degradation']
+        }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        click.echo(f"\nNormal Mode Success Rate: {failure_results['normal_success_rate']:.2%}")
+        click.echo(f"Failure Mode Success Rate: {failure_results['failure_mode_success_rate']:.2%}")
+        click.echo(f"Resilience Score: {failure_results['resilience_score']:.2%}")
+
+        if failure_results['graceful_degradation']:
+            click.echo(f"\n✓ Graceful Degradation: System maintains >50% success under failures")
+        else:
+            click.echo(f"\n✗ Graceful Degradation: System drops below 50% success under failures")
+
+        if verbose:
+            click.echo("\nDetailed Analysis:")
+            normal = failure_results['normal_result']
+            failure = failure_results['failure_result']
+
+            click.echo("\n  Normal Mode - Per Category:")
+            for category, rate in normal.per_category_success.items():
+                click.echo(f"    {category.replace('_', ' ').title()}: {rate:.2%}")
+
+            click.echo("\n  Failure Mode - Per Category:")
+            for category, rate in failure.per_category_success.items():
+                click.echo(f"    {category.replace('_', ' ').title()}: {rate:.2%}")
 
     click.echo("\n" + "=" * 60)
 
