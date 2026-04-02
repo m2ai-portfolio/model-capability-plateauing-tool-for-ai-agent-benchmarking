@@ -8,6 +8,7 @@ import click
 import json
 from benchmarks.reasoning import ReasoningBenchmark
 from benchmarks.tool_use import ToolUseBenchmark
+from benchmarks.harness_quality import HarnessQualityBenchmark
 from benchmarks.config import Config
 
 
@@ -298,6 +299,130 @@ def failure_test(format, verbose):
             click.echo("\n  Failure Mode - Per Category:")
             for category, rate in failure.per_category_success.items():
                 click.echo(f"    {category.replace('_', ' ').title()}: {rate:.2%}")
+
+    click.echo("\n" + "=" * 60)
+
+
+@cli.command()
+@click.option('--format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+@click.option('--verbose', is_flag=True, help='Show detailed per-task results')
+def harness(format, verbose):
+    """Run the harness quality benchmark suite and record metrics."""
+    click.echo("Running Harness Quality Benchmark Suite...")
+    click.echo("=" * 60)
+
+    benchmark = HarnessQualityBenchmark()
+    result = benchmark.run_benchmark()
+
+    if format == 'json':
+        output = {
+            'total_tasks': result.total_tasks,
+            'successful': result.successful,
+            'success_rate': result.success_rate,
+            'avg_latency_ms': result.avg_latency_ms,
+            'max_latency_ms': result.max_latency_ms,
+            'min_latency_ms': result.min_latency_ms,
+            'avg_throughput_ops': result.avg_throughput_ops,
+            'per_category_metrics': result.per_category_metrics,
+            'success_criteria_met': benchmark.check_success_criteria(result.avg_latency_ms)
+        }
+        if verbose:
+            output['per_task_results'] = {
+                task_id: {
+                    'latency_ms': r.latency_ms,
+                    'throughput_ops': r.throughput_ops,
+                    'success': r.success,
+                    'retry_count': r.retry_count
+                }
+                for task_id, r in result.per_task_results.items()
+            }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        click.echo(f"\nTotal Tasks: {result.total_tasks}")
+        click.echo(f"Successful: {result.successful}")
+        click.echo(f"Success Rate: {result.success_rate:.2%}")
+        click.echo(f"\nLatency Metrics:")
+        click.echo(f"  Average: {result.avg_latency_ms:.2f}ms")
+        click.echo(f"  Maximum: {result.max_latency_ms:.2f}ms")
+        click.echo(f"  Minimum: {result.min_latency_ms:.2f}ms")
+        click.echo(f"\nThroughput: {result.avg_throughput_ops:.2f} ops/sec")
+
+        click.echo(f"\nPer-Category Metrics:")
+        for category, metrics in result.per_category_metrics.items():
+            click.echo(f"  {category.replace('_', ' ').title()}:")
+            click.echo(f"    Latency: {metrics['avg_latency_ms']:.2f}ms")
+            click.echo(f"    Throughput: {metrics['avg_throughput_ops']:.2f} ops/sec")
+            click.echo(f"    Success Rate: {metrics['success_rate']:.2%}")
+
+        threshold = Config.HARNESS_LATENCY_THRESHOLD
+        success = benchmark.check_success_criteria(result.avg_latency_ms, threshold)
+        click.echo(f"\nSuccess Criteria (<{threshold:.0f}ms): {'✓ PASS' if success else '✗ FAIL'}")
+
+        if verbose:
+            click.echo(f"\nPer-Task Results:")
+            for task_id, r in result.per_task_results.items():
+                status = "✓" if r.success else "✗"
+                retry_info = f" (retries: {r.retry_count})" if r.retry_count > 0 else ""
+                click.echo(f"  {status} {task_id}: {r.latency_ms:.2f}ms{retry_info}")
+
+    click.echo("\n" + "=" * 60)
+
+
+@cli.command()
+@click.option('--format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+def stress_test(format):
+    """Run stress test to measure latency and throughput under load."""
+    click.echo("Running Harness Stress Test...")
+    click.echo("=" * 60)
+
+    benchmark = HarnessQualityBenchmark()
+    result = benchmark.run_stress_test()
+
+    if format == 'json':
+        click.echo(json.dumps(result, indent=2))
+    else:
+        click.echo(f"\nTotal Tasks: {result['total_tasks']}")
+        click.echo(f"\nLatency Metrics:")
+        click.echo(f"  Average: {result['avg_latency_ms']:.2f}ms")
+        click.echo(f"  Maximum: {result['max_latency_ms']:.2f}ms")
+        click.echo(f"  Minimum: {result['min_latency_ms']:.2f}ms")
+        click.echo(f"\nThroughput: {result['avg_throughput_ops']:.2f} ops/sec")
+
+        threshold = Config.HARNESS_LATENCY_THRESHOLD
+        success = benchmark.check_success_criteria(result['avg_latency_ms'], threshold)
+        click.echo(f"\nSuccess Criteria (<{threshold:.0f}ms): {'✓ PASS' if success else '✗ FAIL'}")
+
+    click.echo("\n" + "=" * 60)
+
+
+@cli.command()
+@click.option('--format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+def load_test(format):
+    """Run load scaling test to benchmark under varying load levels."""
+    click.echo("Running Load Scaling Test...")
+    click.echo("=" * 60)
+
+    benchmark = HarnessQualityBenchmark()
+    result = benchmark.run_load_scaling_test()
+
+    if format == 'json':
+        click.echo(json.dumps(result, indent=2))
+    else:
+        click.echo(f"\nTotal Load Levels Tested: {result['total_load_levels']}")
+        click.echo(f"\nResults by Load Level:")
+
+        for load_key in sorted(result['results_by_load'].keys(), key=lambda x: int(x[:-1])):
+            metrics = result['results_by_load'][load_key]
+            click.echo(f"\n  {load_key} Load:")
+            click.echo(f"    Latency: {metrics['latency_ms']:.2f}ms")
+            click.echo(f"    Throughput: {metrics['throughput_ops']:.2f} ops/sec")
+            click.echo(f"    Success: {'✓' if metrics['success'] else '✗'}")
+
+        # Check if any load level exceeds threshold
+        threshold = Config.HARNESS_LATENCY_THRESHOLD
+        max_latency = max(m['latency_ms'] for m in result['results_by_load'].values())
+        success = benchmark.check_success_criteria(max_latency, threshold)
+        click.echo(f"\nSuccess Criteria - Max Latency (<{threshold:.0f}ms): {'✓ PASS' if success else '✗ FAIL'}")
 
     click.echo("\n" + "=" * 60)
 
